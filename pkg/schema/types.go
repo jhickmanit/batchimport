@@ -35,7 +35,7 @@ type TraitField struct {
 	Title     string                 `json:"title,omitempty"`
 	MaxLength int                    `json:"maxLength,omitempty"`
 	Properties map[string]TraitField `json:"properties,omitempty"`
-	OryKratos map[string]any        `json:"ory.sh/kratos,omitempty"`
+	Credentials map[string]any       `json:"ory.sh/kratos,omitempty"`
 }
 
 // SchemaValidator provides methods for schema validation
