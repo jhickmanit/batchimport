@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/ory/batchimport/pkg/schema"
 )
@@ -17,6 +19,8 @@ const (
 	FormatCSV  Format = "csv"
 	FormatJSON Format = "json"
 )
+
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 
 // Reader handles reading and validating input files
 type Reader struct {
@@ -43,6 +47,137 @@ func (r *Reader) ValidateHeaders() error {
 
 	validator := schema.NewSchemaValidator(r.schema)
 	return validator.ValidateHeaders(headers)
+}
+
+// ValidateEmail validates if a string is a properly formatted email address
+func ValidateEmail(email string) bool {
+	return emailRegex.MatchString(email)
+}
+
+// ReadBatch reads a batch of identities from the file
+func (r *Reader) ReadBatch(batchSize int) ([]map[string]interface{}, error) {
+	file, err := os.Open(r.filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	switch r.format {
+	case FormatCSV:
+		return r.readCSVBatch(file, batchSize)
+	case FormatJSON:
+		return r.readJSONBatch(file, batchSize)
+	default:
+		return nil, fmt.Errorf("unsupported format: %s", r.format)
+	}
+}
+
+// readCSVBatch reads a batch of identities from a CSV file
+func (r *Reader) readCSVBatch(file *os.File, batchSize int) ([]map[string]interface{}, error) {
+	reader := csv.NewReader(file)
+	
+	// Read headers
+	headers, err := reader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CSV headers: %w", err)
+	}
+
+	// Read batch
+	var batch []map[string]interface{}
+	for i := 0; i < batchSize; i++ {
+		record, err := reader.Read()
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			return nil, fmt.Errorf("failed to read CSV record: %w", err)
+		}
+
+		// Convert record to map
+		identity := make(map[string]interface{})
+		for j, value := range record {
+			if j < len(headers) {
+				identity[headers[j]] = value
+			}
+		}
+
+		// Validate email fields
+		for key, value := range identity {
+			if strings.HasSuffix(strings.ToLower(key), "email") {
+				if strValue, ok := value.(string); ok {
+					if !ValidateEmail(strValue) {
+						return nil, fmt.Errorf("invalid email format in field %s: %s", key, strValue)
+					}
+				}
+			}
+		}
+
+		batch = append(batch, identity)
+	}
+
+	return batch, nil
+}
+
+// readJSONBatch reads a batch of identities from a JSON file
+func (r *Reader) readJSONBatch(file *os.File, batchSize int) ([]map[string]interface{}, error) {
+	decoder := json.NewDecoder(file)
+	
+	// Read the first token to determine if it's an array or object
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read JSON token: %w", err)
+	}
+
+	var batch []map[string]interface{}
+	switch token {
+	case json.Delim('['):
+		// It's an array, read batch
+		for i := 0; i < batchSize; i++ {
+			var identity map[string]interface{}
+			if err := decoder.Decode(&identity); err != nil {
+				if err.Error() == "EOF" {
+					break
+				}
+				return nil, fmt.Errorf("failed to decode JSON object: %w", err)
+			}
+
+			// Validate email fields
+			for key, value := range identity {
+				if strings.HasSuffix(strings.ToLower(key), "email") {
+					if strValue, ok := value.(string); ok {
+						if !ValidateEmail(strValue) {
+							return nil, fmt.Errorf("invalid email format in field %s: %s", key, strValue)
+						}
+					}
+				}
+			}
+
+			batch = append(batch, identity)
+		}
+	case json.Delim('{'):
+		// It's a single object
+		var identity map[string]interface{}
+		if err := decoder.Decode(&identity); err != nil {
+			return nil, fmt.Errorf("failed to decode JSON object: %w", err)
+		}
+
+		// Validate email fields
+		for key, value := range identity {
+			if strings.HasSuffix(strings.ToLower(key), "email") {
+				if strValue, ok := value.(string); ok {
+					if !ValidateEmail(strValue) {
+						return nil, fmt.Errorf("invalid email format in field %s: %s", key, strValue)
+					}
+				}
+			}
+		}
+
+		batch = append(batch, identity)
+	default:
+		return nil, fmt.Errorf("invalid JSON format: expected array or object")
+	}
+
+	return batch, nil
 }
 
 // getHeaders returns the headers from the file based on its format

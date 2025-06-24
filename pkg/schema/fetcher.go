@@ -35,7 +35,7 @@ func (f *Fetcher) FetchSchema() (*Schema, error) {
 	ctx := context.Background()
 	
 	// Get the project
-	project, resp, err := f.client.ProjectApi.GetProject(ctx, f.projectID).Execute()
+	project, resp, err := f.client.ProjectAPI.GetProject(ctx, f.projectID).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch project: %w", err)
 	}
